@@ -17,7 +17,6 @@ import numpy as np
 from datamodel import Order
 
 STARFRUIT = "STARFRUIT"
-
 class Trader:
     def __init__(self, initial_cash=100000, position_limit=20, ema_param=0.001):
         print("Initializing Trader...")
@@ -42,48 +41,69 @@ class Trader:
         ema_price = self.ema_prices[STARFRUIT]
         position_starfruit = self.get_position(STARFRUIT)
 
-        orders = []
         if mid_price < ema_price and position_starfruit < self.position_limit:
-            orders.append(Order(STARFRUIT, ask_price, 1))  # Buy at ask price
+            return 'buy'
         elif mid_price > ema_price and position_starfruit > -self.position_limit:
-            orders.append(Order(STARFRUIT, bid_price, -1))  # Sell at bid price
-
-        return orders
+            return 'sell'
+        else:
+            return 'hold'
 
     def trend_following_strategy(self, bid_price, ask_price):
         if bid_price > ask_price:
-            return [Order(STARFRUIT, ask_price, 1)] 
+            return 'buy'
         elif bid_price < ask_price:
-            return [Order(STARFRUIT, bid_price, -1)]
+            return 'sell'
         else:
-            return []
+            return 'hold'
 
     def mean_reversion_strategy(self, bid_price, ask_price):
         if bid_price > ask_price:
-            return [Order(STARFRUIT, bid_price, -1)] 
+            return 'sell'
         elif bid_price < ask_price:
-            return [Order(STARFRUIT, ask_price, 1)]
+            return 'buy'
         else:
-            return []
-
-    def validate_strategy(self, strategy_func, bid_price, ask_price):
-        orders = strategy_func(bid_price, ask_price)
-        if orders:
-            position_change = sum(order.quantity for order in orders)
-            if (position_change > 0 and self.cash >= ask_price * position_change) or \
-               (position_change < 0 and self.get_position(STARFRUIT) >= abs(position_change)):
-                return orders
-        return []
+            return 'hold'
 
     def run(self, bid_price, ask_price):
         self.round += 1
-        orders = []
-        orders.extend(self.validate_strategy(self.moving_average_crossover_strategy, bid_price, ask_price))
-        orders.extend(self.validate_strategy(self.trend_following_strategy, bid_price, ask_price))
-        orders.extend(self.validate_strategy(self.mean_reversion_strategy, bid_price, ask_price))
-        return orders
+        buy_count = 0
+        sell_count = 0
+        hold_count = 0
 
-# The rest of the code remains the same...
+        # Get signals from each strategy
+        moving_average_signal = self.moving_average_crossover_strategy(bid_price, ask_price)
+        trend_following_signal = self.trend_following_strategy(bid_price, ask_price)
+        mean_reversion_signal = self.mean_reversion_strategy(bid_price, ask_price)
+
+        # Count buy, sell, and hold signals
+        if moving_average_signal == 'buy':
+            buy_count += 1
+        elif moving_average_signal == 'sell':
+            sell_count += 1
+        else:
+            hold_count += 1
+
+        if trend_following_signal == 'buy':
+            buy_count += 1
+        elif trend_following_signal == 'sell':
+            sell_count += 1
+        else:
+            hold_count += 1
+
+        if mean_reversion_signal == 'buy':
+            buy_count += 1
+        elif mean_reversion_signal == 'sell':
+            sell_count += 1
+        else:
+            hold_count += 1
+
+        # Decide based on majority vote
+        if buy_count > sell_count and buy_count > hold_count:
+            return [Order(STARFRUIT, ask_price, 1)]  # Buy
+        elif sell_count > buy_count and sell_count > hold_count:
+            return [Order(STARFRUIT, bid_price, -1)]  # Sell
+        else:
+            return []  # Do nothing
 
 
 # SIMULATION ENVIRONMENT
