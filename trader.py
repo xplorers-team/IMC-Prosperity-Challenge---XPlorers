@@ -46,7 +46,6 @@ class Trader:
         osell = collections.OrderedDict(sorted(order_depth.sell_orders.items()))
         obuy = collections.OrderedDict(sorted(order_depth.buy_orders.items(), reverse=True))
 
-
         _, best_sell_pr = self.extract_market_values(osell)
         _, best_buy_pr = self.extract_market_values(obuy, is_buy_order=True)
 
