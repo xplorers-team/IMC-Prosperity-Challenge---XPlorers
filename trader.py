@@ -10,106 +10,105 @@ import copy
 
 AMETHYSTS = 'AMETHYSTS'
 STARFRUIT = 'STARFRUIT'
+POSITION_LIMIT = { AMETHYSTS : 20 }
 
-empty_dict = { AMETHYSTS : 0 }
+empty_dict = { AMETHYSTS : 0, STARFRUIT: 0 }
 
 class Trader:
     position = copy.deepcopy(empty_dict)
-    POSITION_LIMIT = { AMETHYSTS : 20 }
 
     old_starfruit_asks = []
     old_starfruit_bids = []
 
-    def values_extract(self, order_dict, buy=0):
-        tot_vol = 0
-        best_val = -1
-        mxvol = -1
+    def extract_market_values(self, order_prices, is_buy_order=False):
+        """
+        Extracts total volume and best price from the given orders.
+        """
+        total_volume = 0
+        best_price = -1
+        max_volume = -1
 
-        for ask, vol in order_dict.items():
-            if(buy==0):
-                vol *= -1
-            tot_vol += vol
-            if tot_vol > mxvol:
-                mxvol = vol
-                best_val = ask
+        for price, volume in order_prices.items():
+            if not is_buy_order:
+                volume *= -1
+            total_volume += volume
+            if total_volume > max_volume:
+                max_volume = volume
+                best_price = price
         
-        return tot_vol, best_val
+        return total_volume, best_price
     
     def compute_orders_amethysts(self, state: TradingState):
         order_depth: OrderDepth = state.order_depths[AMETHYSTS]
-        acc_bid = 10000
-        acc_ask = 10000
+        orders_to_place: list[Order] = []
 
-        orders: list[Order] = []
-
+        # Sort sell and buy orders by price
         osell = collections.OrderedDict(sorted(order_depth.sell_orders.items()))
         obuy = collections.OrderedDict(sorted(order_depth.buy_orders.items(), reverse=True))
 
-        sell_vol, best_sell_pr = self.values_extract(osell)
-        buy_vol, best_buy_pr = self.values_extract(obuy, 1)
 
-        cpos = self.position[AMETHYSTS]
+        _, best_sell_pr = self.extract_market_values(osell)
+        _, best_buy_pr = self.extract_market_values(obuy, is_buy_order=True)
+
+        current_position = self.position[AMETHYSTS]
 
         mx_with_buy = -1
 
+        # Process potential buy orders based on sorted sell orders and current position.
         for ask, vol in osell.items():
-            if ((ask < acc_bid) or ((self.position[AMETHYSTS]<0) and (ask == acc_bid))) and cpos < self.POSITION_LIMIT[AMETHYSTS]:
+            if ((ask < 10000) or ((self.position[AMETHYSTS]<0) and (ask == 10000))) and current_position < POSITION_LIMIT[AMETHYSTS]:
                 mx_with_buy = max(mx_with_buy, ask)
-                order_for = min(-vol, self.POSITION_LIMIT[AMETHYSTS] - cpos)
-                cpos += order_for
+                order_for = min(-vol, POSITION_LIMIT[AMETHYSTS] - current_position)
+                current_position += order_for
                 assert(order_for >= 0)
-                orders.append(Order(AMETHYSTS, ask, order_for))
-
-        mprice_actual = (best_sell_pr + best_buy_pr)/2
-        mprice_ours = (acc_bid+acc_ask)/2
+                orders_to_place.append(Order(AMETHYSTS, ask, order_for))
 
         undercut_buy = best_buy_pr + 1
         undercut_sell = best_sell_pr - 1
 
-        bid_pr = min(undercut_buy, acc_bid-1) # we will shift this by 1 to beat this price
-        sell_pr = max(undercut_sell, acc_ask+1)
+        bid_pr = min(undercut_buy, 9999)
+        sell_pr = max(undercut_sell, 10001)
 
-        if (cpos < self.POSITION_LIMIT[AMETHYSTS]) and (self.position[AMETHYSTS] < 0):
-            num = min(40, self.POSITION_LIMIT[AMETHYSTS] - cpos)
-            orders.append(Order(AMETHYSTS, min(undercut_buy + 1, acc_bid-1), num))
-            cpos += num
+        if (current_position < POSITION_LIMIT[AMETHYSTS]) and (self.position[AMETHYSTS] < 0):
+            order_volume = min(40, POSITION_LIMIT[AMETHYSTS] - current_position)
+            orders_to_place.append(Order(AMETHYSTS, min(undercut_buy + 1, 9999), order_volume))
+            current_position += order_volume
 
-        if (cpos < self.POSITION_LIMIT[AMETHYSTS]) and (self.position[AMETHYSTS] > 15):
-            num = min(40, self.POSITION_LIMIT[AMETHYSTS] - cpos)
-            orders.append(Order(AMETHYSTS, min(undercut_buy - 1, acc_bid-1), num))
-            cpos += num
+        if (current_position < POSITION_LIMIT[AMETHYSTS]) and (self.position[AMETHYSTS] > 15):
+            order_volume = min(40, POSITION_LIMIT[AMETHYSTS] - current_position)
+            orders_to_place.append(Order(AMETHYSTS, min(undercut_buy - 1, 9999), order_volume))
+            current_position += order_volume
 
-        if cpos < self.POSITION_LIMIT[AMETHYSTS]:
-            num = min(40, self.POSITION_LIMIT[AMETHYSTS] - cpos)
-            orders.append(Order(AMETHYSTS, bid_pr, num))
-            cpos += num
+        if current_position < POSITION_LIMIT[AMETHYSTS]:
+            order_volume = min(40, POSITION_LIMIT[AMETHYSTS] - current_position)
+            orders_to_place.append(Order(AMETHYSTS, bid_pr, order_volume))
+            current_position += order_volume
         
-        cpos = self.position[AMETHYSTS]
+        current_position = self.position[AMETHYSTS]
 
         for bid, vol in obuy.items():
-            if ((bid > acc_ask) or ((self.position[AMETHYSTS]>0) and (bid == acc_ask))) and cpos > -self.POSITION_LIMIT[AMETHYSTS]:
-                order_for = max(-vol, -self.POSITION_LIMIT[AMETHYSTS]-cpos)
-                # order_for is a negative number denoting how much we will sell
-                cpos += order_for
-                assert(order_for <= 0)
-                orders.append(Order(AMETHYSTS, bid, order_for))
+            if ((bid > 10000) or ((self.position[AMETHYSTS]>0) and (bid == 10000))) and current_position > -POSITION_LIMIT[AMETHYSTS]:
+                order_volume = max(-vol, -POSITION_LIMIT[AMETHYSTS]-current_position)
+                current_position += order_volume
+                assert(order_volume <= 0)
+                orders_to_place.append(Order(AMETHYSTS, bid, order_volume))
 
-        if (cpos > -self.POSITION_LIMIT[AMETHYSTS]) and (self.position[AMETHYSTS] > 0):
-            num = max(-40, -self.POSITION_LIMIT[AMETHYSTS]-cpos)
-            orders.append(Order(AMETHYSTS, max(undercut_sell-1, acc_ask+1), num))
-            cpos += num
+        if (current_position > -POSITION_LIMIT[AMETHYSTS]) and (self.position[AMETHYSTS] > 0):
+            order_volume = max(-40, -POSITION_LIMIT[AMETHYSTS]-current_position)
+            orders_to_place.append(Order(AMETHYSTS, max(undercut_sell-1, 10001), order_volume))
+            current_position += order_volume
 
-        if (cpos > -self.POSITION_LIMIT[AMETHYSTS]) and (self.position[AMETHYSTS] < -15):
-            num = max(-40, -self.POSITION_LIMIT[AMETHYSTS]-cpos)
-            orders.append(Order(AMETHYSTS, max(undercut_sell+1, acc_ask+1), num))
-            cpos += num
+        if (current_position > -POSITION_LIMIT[AMETHYSTS]) and (self.position[AMETHYSTS] < -15):
+            order_volume = max(-40, -POSITION_LIMIT[AMETHYSTS]-current_position)
+            orders_to_place.append(Order(AMETHYSTS, max(undercut_sell+1, 10001), order_volume))
+            current_position += order_volume
 
-        if cpos > -self.POSITION_LIMIT[AMETHYSTS]:
-            num = max(-40, -self.POSITION_LIMIT[AMETHYSTS]-cpos)
-            orders.append(Order(AMETHYSTS, sell_pr, num))
-            cpos += num
+        if current_position > -POSITION_LIMIT[AMETHYSTS]:
+            order_volume = max(-40, -POSITION_LIMIT[AMETHYSTS]-current_position)
+            orders_to_place.append(Order(AMETHYSTS, sell_pr, order_volume))
+            current_position += order_volume
 
-        return orders
+        return orders_to_place
 
     def trade_starfruit(self, state: TradingState):
         max_pos = 20
@@ -182,7 +181,7 @@ class Trader:
 
     def run(self, state: TradingState) -> Dict[str, List[Order]]:
         """
-        Only method required. It takes all buy and sell orders for all symbols as an input,
+        Method that takes all buy and sell orders for all symbols as an input,
         and outputs a list of orders to be sent
         """
         result = {AMETHYSTS : [], STARFRUIT: [] }
@@ -190,10 +189,17 @@ class Trader:
         for key, val in state.position.items():
             self.position[key] = val
  
-        
-        orders = self.compute_orders_amethysts(state)
-        result[AMETHYSTS] += orders
-        result[STARFRUIT] = self.trade_starfruit(state)
+        try:
+            result[AMETHYSTS] += self.compute_orders_amethysts(state)
+        except Exception as e:
+            print("Error in amethysts strategy")
+            print(e)
+
+        try:
+            result[STARFRUIT] = self.trade_starfruit(state)
+        except Exception as e:
+            print("Error in starfruit strategy")
+            print(e)
 
         traderData = "SAMPLE"
         conversions = 1 
