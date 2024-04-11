@@ -112,21 +112,19 @@ class Logger:
 
         return value[:max_length - 3] + "..."
 
-
 logger = Logger()
 
+INF = int(1e9)
 AMETHYSTS = 'AMETHYSTS'
 STARFRUIT = 'STARFRUIT'
-POSITION_LIMIT = { AMETHYSTS : 20 }
+POSITION_LIMIT = { AMETHYSTS : 20, STARFRUIT: 20 }
 
 empty_dict = { AMETHYSTS : 0, STARFRUIT: 0 }
 
 class Trader:
     position = copy.deepcopy(empty_dict)
+    starfruit_cache = []
 
-    old_starfruit_asks = []
-    old_starfruit_bids = []
-    
     def compute_orders_amethysts(self, state: TradingState):
         order_depth: OrderDepth = state.order_depths[AMETHYSTS]
         orders_to_place: list[Order] = []
@@ -199,74 +197,82 @@ class Trader:
 
         return orders_to_place
 
-    def trade_starfruit(self, state: TradingState):
-        max_pos = 20
-        orders: list[Order] = []
-        prod_position = state.position[STARFRUIT] if STARFRUIT in state.position.keys() else 0
-        strategy_start_day = 2
-        trade_count = 1
-        min_req_price_difference = 3
+    def compute_orders_starfruit(self, state: TradingState):
+        cache_size = 5
+        if len(self.starfruit_cache) == cache_size:
+            self.starfruit_cache.pop(0)
+            
+        current_position = self.position[STARFRUIT]
         order_depth: OrderDepth = state.order_depths[STARFRUIT]
-        #save orders
-        self.old_starfruit_asks.append(order_depth.sell_orders)
-        self.old_starfruit_bids.append(order_depth.buy_orders)
+        orders_to_place: list[Order] = []
 
-        if len(self.old_starfruit_asks) < strategy_start_day or len(self.old_starfruit_bids) < strategy_start_day:
-            return
+        sell_orders = collections.OrderedDict(sorted(order_depth.sell_orders.items()))
+        buy_orders = collections.OrderedDict(sorted(order_depth.buy_orders.items(), reverse=True))
+        market_sell_price = calculate_vwap(sell_orders)
+        market_buy_price = calculate_vwap(buy_orders)
 
-        avg_bid, avg_ask = self.calculate_avg_prices(strategy_start_day)
+        self.starfruit_cache.append((market_sell_price+market_buy_price)/2)
+        
+        predicted_bid_price = -INF
+        predicted_ask_price = INF
+        
+        if len(self.starfruit_cache) == cache_size:
+            coef = [0.22813429, 0.17454701, 0.13647121, 0.14916031, 0.31132865]
+            intercept = 1.8074608578708649
+            next_price = intercept
+            for i, val in enumerate(self.starfruit_cache):
+                next_price += val * coef[i]
 
-        if len(order_depth.sell_orders) != 0:
-            best_asks = sorted(order_depth.sell_orders.keys())
-            i = 0
-            while i < trade_count and len(best_asks) > i and best_asks[i] - avg_bid <= min_req_price_difference:
-                if prod_position == max_pos:
-                    break
-                # Buy product at best ask
-                best_ask_volume = order_depth.sell_orders[best_asks[i]]
-                if prod_position - best_ask_volume <= max_pos:
-                    orders.append(Order(STARFRUIT, best_asks[i], -best_ask_volume))
-                    prod_position += -best_ask_volume
-                else:
-                    # Buy as much as we can without exceeding the max_pos
-                    vol = max_pos - prod_position
-                    orders.append(Order(STARFRUIT, best_asks[i], vol))
-                    prod_position += vol
-                i += 1
+            next_price = int(round(next_price))
 
-        if len(order_depth.buy_orders) != 0:
-            best_bids = sorted(order_depth.buy_orders.keys(), reverse=True)
-            i = 0
-            while i < trade_count and len(best_bids) > i and avg_ask - best_bids[i] <= min_req_price_difference:
-                if prod_position == -max_pos:
-                    break
-                # Sell product at best bid
-                best_bid_volume = order_depth.buy_orders[best_bids[i]]
-                if prod_position - best_bid_volume >= -max_pos:
-                    orders.append(Order(STARFRUIT, best_bids[i], -best_bid_volume))
-                    prod_position += -best_bid_volume
-                else:
-                    # Sell as much as we can without exceeding the max_pos
-                    vol = prod_position + max_pos
-                    orders.append(Order(STARFRUIT, best_bids[i], -vol))
-                    prod_position += -vol
-                i += 1
+            predicted_bid_price = next_price-1
+            predicted_ask_price = next_price+1
 
-        return orders
+        bid_pr = min(market_buy_price + 1, predicted_bid_price) 
+        sell_pr = max(market_sell_price - 1, predicted_ask_price)
 
-    def calculate_avg_prices(self, days: int) -> Tuple[int, int]:
-        # Calculate the average bid and ask price for the last days
-        relevant_bids = []
-        for bids in self.old_starfruit_bids[-days:]:
-            relevant_bids.extend([(value, bids[value]) for value in bids])
-        relevant_asks = []
-        for asks in self.old_starfruit_asks[-days:]:
-            relevant_asks.extend([(value, asks[value]) for value in asks])
+        for ask_price, volume in sell_orders.items():
+            should_buy = False
+            if ask_price <= predicted_bid_price:
+                should_buy = True
+            elif self.position[STARFRUIT] < 0 and ask_price == predicted_bid_price + 1:
+                should_buy = True
 
-        avg_bid = np.average([x[0] for x in relevant_bids], weights=[x[1] for x in relevant_bids])
-        avg_ask = np.average([x[0] for x in relevant_asks], weights=[x[1] for x in relevant_asks])
+            if should_buy and current_position < POSITION_LIMIT[STARFRUIT]:
+                buy_volume = min(-volume, POSITION_LIMIT[STARFRUIT] - current_position)
+                current_position += buy_volume
 
-        return avg_bid, avg_ask
+                assert(buy_volume >= 0) # Ensure buy_volume is positive, as it represents a buy order
+                orders_to_place.append(Order(STARFRUIT, ask_price, buy_volume))
+
+        if current_position < POSITION_LIMIT[STARFRUIT]:
+            additional_units_to_buy = POSITION_LIMIT[STARFRUIT] - current_position
+            orders_to_place.append(Order(STARFRUIT, bid_pr, additional_units_to_buy))
+            current_position += additional_units_to_buy
+
+        #reset
+        current_position = self.position[STARFRUIT]
+        
+        for buy_price, buy_volume in buy_orders.items():
+            should_sell = False
+            if buy_price >= predicted_ask_price:
+                should_sell = True
+            elif self.position[STARFRUIT] > 0 and (buy_price + 1 == predicted_ask_price):
+                should_sell = True
+
+            if should_sell and current_position > -POSITION_LIMIT[STARFRUIT]:
+                sell_volume = max(-buy_volume, -POSITION_LIMIT[STARFRUIT] - current_position)
+                current_position += sell_volume
+                assert(sell_volume <= 0) # Ensure the calculated sell volume is negative
+                orders_to_place.append(Order(STARFRUIT, buy_price, sell_volume))
+
+
+        if current_position > -POSITION_LIMIT[STARFRUIT]:
+            sell_volume = -POSITION_LIMIT[STARFRUIT] - current_position
+            orders_to_place.append(Order(STARFRUIT, sell_pr, sell_volume))
+            current_position += sell_volume
+
+        return orders_to_place
 
     def run(self, state: TradingState) -> Dict[str, List[Order]]:
         """
@@ -285,7 +291,7 @@ class Trader:
             print(e)
 
         try:
-            result[STARFRUIT] = self.trade_starfruit(state)
+            result[STARFRUIT] = self.compute_orders_starfruit(state)
         except Exception as e:
             print("Error in starfruit strategy")
             print(e)
@@ -299,7 +305,7 @@ class Trader:
             print(e)
         return result, conversions, traderData
     
-#Utils for Amnethysts
+
 def calculate_vwap(orders):
     """
     Calculates the Volume Weighted Average Price (VWAP) for a collection of orders.
