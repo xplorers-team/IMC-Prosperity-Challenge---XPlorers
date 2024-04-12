@@ -163,7 +163,7 @@ class Trader:
             current_position += order_volume
 
         #reset 
-        current_position = self.position[AMETHYSTS]
+        current_position =  self.position[AMETHYSTS]
 
         market_sell_price = calculate_vwap(sell_orders)
         for bid_price, volume_demanded in buy_orders.items():
