@@ -216,9 +216,10 @@ class Trader:
         predicted_bid_price = -INF
         predicted_ask_price = INF
         
-        if len(self.starfruit_cache) == cache_size:
-            coef = [0.22813429, 0.17454701, 0.13647121, 0.14916031, 0.31132865]
-            intercept = 1.8074608578708649
+        if len(self.starfruit_cache) == cache_size:   
+            coef = [0.14043272, 0.14095636, 0.17112349, 0.23187564, 0.31519637]
+            intercept = 2.097062497175102
+
             next_price = intercept
             for i, val in enumerate(self.starfruit_cache):
                 next_price += val * coef[i]
@@ -296,7 +297,7 @@ class Trader:
             print("Error in starfruit strategy")
             print(e)
 
-        traderData = "SAMPLE"
+        traderData = ""
         conversions = 1 
         try:
             logger.flush(state, result, conversions, traderData)
