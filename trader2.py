@@ -120,7 +120,7 @@ STARFRUIT = 'STARFRUIT'
 ORCHIDS = 'ORCHIDS'
 POSITION_LIMIT = { AMETHYSTS : 20, STARFRUIT: 20 }
 
-empty_dict = { AMETHYSTS : 0, STARFRUIT: 0 }
+empty_dict = {AMETHYSTS : 0, STARFRUIT: 0}
 
 class Trader:
     position = copy.deepcopy(empty_dict)
@@ -136,14 +136,10 @@ class Trader:
         best_ask_south = state.observations.conversionObservations['ORCHIDS'].askPrice
         transport_fees = state.observations.conversionObservations['ORCHIDS'].transportFees
         import_tariff = state.observations.conversionObservations['ORCHIDS'].importTariff
-        best_bid_quantity = state.order_depths['ORCHIDS'].buy_orders.get(best_bid_local, 0)
-        total_buy_volume = sum(state.order_depths['ORCHIDS'].buy_orders.values())
-        total_sell_volume = -sum(state.order_depths['ORCHIDS'].sell_orders.values())
     
         trade_volume = self.position_limit - abs(current_position)
         total_cost_south = (best_ask_south + transport_fees + import_tariff) * trade_volume
-        is_arbitrage = (best_bid_local +2)* trade_volume > total_cost_south
-        return is_arbitrage, best_bid_local, trade_volume
+        return best_bid_local, trade_volume
 
     def compute_orders_amethysts(self, state: TradingState):
         order_depth: OrderDepth = state.order_depths[AMETHYSTS]
@@ -302,19 +298,28 @@ class Trader:
         """
         result = {AMETHYSTS : [], STARFRUIT: [], ORCHIDS: []}
 
-        is_arbitrage, best_bid_local, trade_volume = self.determine_arbitrage_opportunity(state)
+        best_bid_local, trade_volume = self.determine_arbitrage_opportunity(state)
 
         orders = []
         conversions = 0
         if self.arbitrage_opportunities:
             conversions = abs(state.position.get('ORCHIDS', 0))
             self.arbitrage_opportunities.clear()
-        if is_arbitrage and trade_volume > 0:
+        if trade_volume > 0:
             # Place a short sell order if there's an arbitrage opportunity
             orders.append(Order('ORCHIDS', best_bid_local+2, -trade_volume))
             # Store the trade volume to keep track of how much we'll need to cover in the next tick
             self.arbitrage_opportunities.append(trade_volume)
-
+        
+        if trade_volume == 0:
+            best_bid_local = max(state.order_depths['ORCHIDS'].buy_orders.keys(), default=0)
+            if self.arbitrage_opportunities:
+                conversions = abs(state.position.get('ORCHIDS', 0))
+                self.arbitrage_opportunities.clear()
+            trade_volume = 100
+            orders.append(Order('ORCHIDS', best_bid_local+2, -trade_volume))
+            self.arbitrage_opportunities.append(trade_volume)
+        
         for key, val in state.position.items():
             self.position[key] = val
 
@@ -367,4 +372,3 @@ def calculate_vwap(orders):
         vwap = 0
 
     return round(vwap)
-
