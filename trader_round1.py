@@ -328,4 +328,3 @@ def calculate_vwap(orders):
         vwap = 0
 
     return round(vwap)
-
