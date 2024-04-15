@@ -131,14 +131,8 @@ class Trader:
         self.arbitrage_opportunities = []
 
     def determine_arbitrage_opportunity(self, state):
-        current_position = state.position.get('ORCHIDS', 0)
         best_bid_local = max(state.order_depths['ORCHIDS'].buy_orders.keys(), default=0)
-        best_ask_south = state.observations.conversionObservations['ORCHIDS'].askPrice
-        transport_fees = state.observations.conversionObservations['ORCHIDS'].transportFees
-        import_tariff = state.observations.conversionObservations['ORCHIDS'].importTariff
-    
-        trade_volume = self.position_limit - abs(current_position)
-        total_cost_south = (best_ask_south + transport_fees + import_tariff) * trade_volume
+        trade_volume = 100
         return best_bid_local, trade_volume
 
     def compute_orders_amethysts(self, state: TradingState):
@@ -310,16 +304,7 @@ class Trader:
             orders.append(Order('ORCHIDS', best_bid_local+2, -trade_volume))
             # Store the trade volume to keep track of how much we'll need to cover in the next tick
             self.arbitrage_opportunities.append(trade_volume)
-        
-        if trade_volume == 0:
-            best_bid_local = max(state.order_depths['ORCHIDS'].buy_orders.keys(), default=0)
-            if self.arbitrage_opportunities:
-                conversions = abs(state.position.get('ORCHIDS', 0))
-                self.arbitrage_opportunities.clear()
-            trade_volume = 100
-            orders.append(Order('ORCHIDS', best_bid_local+2, -trade_volume))
-            self.arbitrage_opportunities.append(trade_volume)
-        
+
         for key, val in state.position.items():
             self.position[key] = val
 
