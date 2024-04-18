@@ -8,6 +8,7 @@ import math
 import string
 import copy
 import json
+import pandas as pd
 
 class Logger:
     def __init__(self) -> None:
@@ -119,18 +120,73 @@ AMETHYSTS = 'AMETHYSTS'
 STARFRUIT = 'STARFRUIT'
 ORCHIDS = 'ORCHIDS'
 POSITION_LIMIT = { AMETHYSTS : 20, STARFRUIT: 20 }
-
-empty_dict = {AMETHYSTS : 0, STARFRUIT: 0}
+WINDOW = 400
+empty_dict = {'STRAWBERRIES' : 0, 'CHOCOLATE': 0, 'ROSES' : 0, 'GIFT_BASKET' : 0, AMETHYSTS: 0,STARFRUIT: 0 }
 
 class Trader:
     position = copy.deepcopy(empty_dict)
     starfruit_cache = []
 
+    POSITION_LIMIT = {'STRAWBERRIES' : 350, 'CHOCOLATE': 250, 'ROSES' : 60, 'GIFT_BASKET' : 60}
+    prices = {'SPREAD_GIFT': pd.Series(dtype='float64'), 'SPREAD_ROSES': pd.Series(dtype='float64'), 'SPREAD_CHOCOLATE': pd.Series(dtype='float64')}
+        
+    def get_mid_price(self, product, state : TradingState):
+        market_bids = state.order_depths[product].buy_orders
+        market_asks = state.order_depths[product].sell_orders
+        best_bid = max(market_bids)
+        best_ask = min(market_asks)
+        return (best_bid + best_ask)/2
+    
+    def compute_orders_baskets(self, state):
+        orders = {'STRAWBERRIES' : [], 'CHOCOLATE': [], 'ROSES' : [], 'GIFT_BASKET' : []}
+        spread5 = self.get_mid_price('GIFT_BASKET', state) - self.get_mid_price('STRAWBERRIES', state)*6 - self.get_mid_price('CHOCOLATE', state)*4 - self.get_mid_price('ROSES', state)
+        self.prices["SPREAD_GIFT"] = pd.concat([self.prices["SPREAD_GIFT"],pd.Series({state.timestamp: spread5})])
+        position_basket = state.position.get('GIFT_BASKET', 0)
+        rolling_5_spread_basket = self.prices["SPREAD_GIFT"].rolling(5).mean().iloc[-1]
+        avg_spread_basket = 378.5
+        std_spread_basket = 75.3
+        
+        
+        if len(self.prices["SPREAD_GIFT"]) < WINDOW:
+            if rolling_5_spread_basket > avg_spread_basket + 0.5*std_spread_basket: #sell basket and buy choco
+                vol_basket = self.position['GIFT_BASKET'] + self.POSITION_LIMIT['GIFT_BASKET']
+                vol_choco = self.position['CHOCOLATE'] - self.POSITION_LIMIT['CHOCOLATE']
+                vol_roses = self.position['ROSES'] - self.POSITION_LIMIT['ROSES']
+                if vol_basket > 0:
+                    orders['GIFT_BASKET'].append(Order('GIFT_BASKET', max(state.order_depths['GIFT_BASKET'].buy_orders)-2, -vol_basket))
+        
+            elif rolling_5_spread_basket < avg_spread_basket - 0.5*std_spread_basket: #buy basket and sell choco
+                vol_basket = self.POSITION_LIMIT['GIFT_BASKET'] - self.position['GIFT_BASKET']
+                vol_choco = self.position['CHOCOLATE'] + self.POSITION_LIMIT['CHOCOLATE']
+                vol_roses = self.position['ROSES']+ self.POSITION_LIMIT['ROSES']
+                if vol_basket > 0:
+                    orders['GIFT_BASKET'].append(Order('GIFT_BASKET', min(state.order_depths['GIFT_BASKET'].sell_orders)+2, vol_basket))
+        
+        if len(self.prices["SPREAD_GIFT"]) >= WINDOW:
+            #avg_spread_basket = self.prices["SPREAD_GIFT"].rolling(WINDOW).mean().iloc[-1]
+            std_spread_basket = self.prices["SPREAD_GIFT"].rolling(WINDOW).std().iloc[-1]
+            
+            if not np.isnan(rolling_5_spread_basket):
+                if rolling_5_spread_basket > avg_spread_basket + 1.5*std_spread_basket: #sell basket and buy choco
+                    vol_basket = self.position['GIFT_BASKET'] + self.POSITION_LIMIT['GIFT_BASKET']
+                    vol_choco = self.position['CHOCOLATE'] - self.POSITION_LIMIT['CHOCOLATE']
+                    vol_roses = self.position['ROSES'] - self.POSITION_LIMIT['ROSES']
+                    if vol_basket > 0:
+                        orders['GIFT_BASKET'].append(Order('GIFT_BASKET', max(state.order_depths['GIFT_BASKET'].buy_orders)-2, -vol_basket))
+
+                elif rolling_5_spread_basket < avg_spread_basket - 1.5*std_spread_basket: #buy basket and sell choco
+                    vol_basket = self.POSITION_LIMIT['GIFT_BASKET'] - self.position['GIFT_BASKET']
+                    vol_choco = self.position['CHOCOLATE'] + self.POSITION_LIMIT['CHOCOLATE']
+                    vol_roses = self.position['ROSES'] + self.POSITION_LIMIT['ROSES']
+                    if vol_basket > 0:
+                        orders['GIFT_BASKET'].append(Order('GIFT_BASKET', min(state.order_depths['GIFT_BASKET'].sell_orders)+2, vol_basket))
+        return orders
+
     def __init__(self):
         self.position_limit = 100  # Maximum number of Orchids you can hold or short
         self.arbitrage_opportunities = []
 
-    def determine_arbitrage_opportunity(self, state):
+    def determine_arbitrage_opportunity(self, state:TradingState):
        best_bid_local = max(state.order_depths['ORCHIDS'].buy_orders.keys(), default=0)
        overseas_ask_price = state.observations.conversionObservations['ORCHIDS'].askPrice
        transport_fees = state.observations.conversionObservations['ORCHIDS'].transportFees
@@ -297,9 +353,10 @@ class Trader:
         Method that takes all buy and sell orders for all symbols as an input,
         and outputs a list of orders to be sent
         """
-        result = {AMETHYSTS : [], STARFRUIT: [], ORCHIDS: []}
+        result = {AMETHYSTS : [], STARFRUIT: [], ORCHIDS: [], 'STRAWBERRIES' : [], 'CHOCOLATE' : [], 'ROSES' : [], 'GIFT_BASKET' : []}
 
         sell_price, trade_volume = self.determine_arbitrage_opportunity(state)
+        
 
         orders = []
         conversions = 0
@@ -315,10 +372,36 @@ class Trader:
         for key, val in state.position.items():
             self.position[key] = val
 
+        orders3 = self.compute_orders_baskets(state)
+
+        try:
+            result['GIFT_BASKET'] += orders3['GIFT_BASKET']
+        except Exception as e:
+            print("Error in BASKET strategy")
+            print(e)
+
+        try:
+            result['STRAWBERRIES'] += orders3['STRAWBERRIES']
+        except Exception as e:
+            print("Error in STRAWBERRIES strategy")
+            print(e)
+
+        try:
+            result['ROSES'] += orders3['ROSES']
+        except Exception as e:
+            print("Error in ROSES strategy")
+            print(e)
+
+        try:
+            result['CHOCOLATE'] += orders3['CHOCOLATE']
+        except Exception as e:
+            print("Error in CHOCOLATE strategy")
+            print(e)
+
         try:
             result[ORCHIDS] += orders
         except Exception as e:
-            print("Error in amethysts strategy")
+            print("Error in ORCHIDS strategy")
             print(e)
 
         try:
