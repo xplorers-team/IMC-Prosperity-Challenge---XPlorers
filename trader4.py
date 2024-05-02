@@ -121,15 +121,18 @@ STARFRUIT = 'STARFRUIT'
 ORCHIDS = 'ORCHIDS'
 POSITION_LIMIT = { AMETHYSTS : 20, STARFRUIT: 20 }
 WINDOW = 400
-empty_dict = {'STRAWBERRIES' : 0, 'CHOCOLATE': 0, 'ROSES' : 0, 'GIFT_BASKET' : 0, AMETHYSTS: 0,STARFRUIT: 0 }
+empty_dict = {'STRAWBERRIES' : 0, 'CHOCOLATE': 0, 'ROSES' : 0, 'GIFT_BASKET' : 0, AMETHYSTS: 0,STARFRUIT: 0, 'COCONUT' : 0, 'COCONUT_COUPON': 0}
+
 
 class Trader:
     position = copy.deepcopy(empty_dict)
     starfruit_cache = []
 
-    POSITION_LIMIT = {'STRAWBERRIES' : 350, 'CHOCOLATE': 250, 'ROSES' : 60, 'GIFT_BASKET' : 60}
-    prices = {'SPREAD_GIFT': pd.Series(dtype='float64'), 'SPREAD_ROSES': pd.Series(dtype='float64'), 'SPREAD_CHOCOLATE': pd.Series(dtype='float64')}
-        
+    POSITION_LIMIT = {'STRAWBERRIES' : 350, 'CHOCOLATE': 250, 'ROSES' : 60, 'GIFT_BASKET' : 60, 'COCONUT': 300, 'COCONUT_COUPON': 600}
+    prices = {'SPREAD_GIFT': pd.Series(dtype='float64'), 'SPREAD_ROSES': pd.Series(dtype='float64'), 'SPREAD_CHOCOLATE': pd.Series(dtype='float64'), 
+              'COCONUT': pd.Series(dtype='float64'), 'SPREAD_COCO': pd.Series(dtype='float64')}
+
+    
     def get_mid_price(self, product, state : TradingState):
         market_bids = state.order_depths[product].buy_orders
         market_asks = state.order_depths[product].sell_orders
@@ -137,69 +140,65 @@ class Trader:
         best_ask = min(market_asks)
         return (best_bid + best_ask)/2
     
-    def compute_orders_roses(self, state):
-        orders = []
-        mid_prices = {}
-        mid_prices['GIFT_BASKET'] = self.get_mid_price('GIFT_BASKET', state)
-        mid_prices['ROSES'] = self.get_mid_price('ROSES', state)
-        rose_gb_spread = mid_prices['GIFT_BASKET'] - mid_prices['ROSES'] * 70836.41 / 14493.37
-        threshold = 251.74
-
-        if rose_gb_spread > threshold:
-            order_vol_roses = self.POSITION_LIMIT['ROSES'] - self.position['ROSES']
-            if order_vol_roses != 0:
-                # Assuming best_ask_prices is a dictionary containing the best ask price for each product
-                orders.append(Order('ROSES', min(state.order_depths['ROSES'].sell_orders.keys()) + 1, order_vol_roses))
-        elif rose_gb_spread < -threshold:
-            order_vol_roses = -self.position['ROSES'] - self.POSITION_LIMIT['ROSES']
-            if order_vol_roses != 0:
-                # Assuming best_bid_prices is a dictionary containing the best bid price for each product
-                orders.append(Order('ROSES', max(state.order_depths['ROSES'].buy_orders.keys()) - 1, order_vol_roses))
-
-        return orders
-    
     def compute_orders_baskets(self, state):
         orders = {'STRAWBERRIES' : [], 'CHOCOLATE': [], 'ROSES' : [], 'GIFT_BASKET' : []}
         spread5 = self.get_mid_price('GIFT_BASKET', state) - self.get_mid_price('STRAWBERRIES', state)*6 - self.get_mid_price('CHOCOLATE', state)*4 - self.get_mid_price('ROSES', state)
         self.prices["SPREAD_GIFT"] = pd.concat([self.prices["SPREAD_GIFT"],pd.Series({state.timestamp: spread5})])
         position_basket = state.position.get('GIFT_BASKET', 0)
-        
         rolling_5_spread_basket = self.prices["SPREAD_GIFT"].rolling(5).mean().iloc[-1]
         avg_spread_basket = 378.5
         std_spread_basket = 75.3
         
-        
         if len(self.prices["SPREAD_GIFT"]) < WINDOW:
             if rolling_5_spread_basket > avg_spread_basket + 0.5*std_spread_basket: #sell basket and buy choco
                 vol_basket = self.position['GIFT_BASKET'] + self.POSITION_LIMIT['GIFT_BASKET']
-                vol_choco = self.position['CHOCOLATE'] - self.POSITION_LIMIT['CHOCOLATE']
-                vol_roses = self.position['ROSES'] - self.POSITION_LIMIT['ROSES']
+                vol_choco = min(240, 4*vol_basket)
+                vol_strawberries = min(350, 6*vol_basket)
+                vol_roses = vol_basket
                 if vol_basket > 0:
-                    orders['GIFT_BASKET'].append(Order('GIFT_BASKET', max(state.order_depths['GIFT_BASKET'].buy_orders)-2, -vol_basket))
+                    orders['GIFT_BASKET'].append(Order('GIFT_BASKET', max(state.order_depths['GIFT_BASKET'].buy_orders), -vol_basket))
+                    orders['CHOCOLATE'].append(Order('CHOCOLATE', min(state.order_depths['CHOCOLATE'].sell_orders), vol_choco))
+                    orders['STRAWBERRIES'].append(Order('STRAWBERRIES', min(state.order_depths['STRAWBERRIES'].sell_orders), vol_strawberries))
+                    orders['ROSES'].append(Order('ROSES', min(state.order_depths['ROSES'].sell_orders), vol_roses))
         
             elif rolling_5_spread_basket < avg_spread_basket - 0.5*std_spread_basket: #buy basket and sell choco
                 vol_basket = self.POSITION_LIMIT['GIFT_BASKET'] - self.position['GIFT_BASKET']
-                vol_choco = self.position['CHOCOLATE'] + self.POSITION_LIMIT['CHOCOLATE']
-                vol_roses = self.position['ROSES']+ self.POSITION_LIMIT['ROSES']
+                vol_choco = min(240, 4*vol_basket)
+                vol_strawberries = min(350, 6*vol_basket)
+                vol_roses = vol_basket
                 if vol_basket > 0:
-                    orders['GIFT_BASKET'].append(Order('GIFT_BASKET', min(state.order_depths['GIFT_BASKET'].sell_orders)+2, vol_basket))
-        
-        if len(self.prices["SPREAD_GIFT"]) >= WINDOW:
+                    orders['GIFT_BASKET'].append(Order('GIFT_BASKET', min(state.order_depths['GIFT_BASKET'].sell_orders), vol_basket))
+                    orders['CHOCOLATE'].append(Order('CHOCOLATE', max(state.order_depths['CHOCOLATE'].buy_orders), -vol_choco))
+                    orders['STRAWBERRIES'].append(Order('STRAWBERRIES', max(state.order_depths['STRAWBERRIES'].buy_orders), -vol_strawberries))
+                    orders['ROSES'].append(Order('ROSES', max(state.order_depths['ROSES'].buy_orders), -vol_roses))
+        elif len(self.prices["SPREAD_GIFT"]) >= WINDOW:
             #avg_spread_basket = self.prices["SPREAD_GIFT"].rolling(WINDOW).mean().iloc[-1]
             std_spread_basket = self.prices["SPREAD_GIFT"].rolling(WINDOW).std().iloc[-1]
             
             if not np.isnan(rolling_5_spread_basket):
                 if rolling_5_spread_basket > avg_spread_basket + 1.5*std_spread_basket: #sell basket and buy choco
                     vol_basket = self.position['GIFT_BASKET'] + self.POSITION_LIMIT['GIFT_BASKET']
+                    vol_choco = min(240, 4*vol_basket)
+                    vol_strawberries = min(350, 6*vol_basket)
+                    vol_roses = vol_basket
                     if vol_basket > 0:
                         orders['GIFT_BASKET'].append(Order('GIFT_BASKET', max(state.order_depths['GIFT_BASKET'].buy_orders)-2, -vol_basket))
+                        orders['CHOCOLATE'].append(Order('CHOCOLATE', min(state.order_depths['CHOCOLATE'].sell_orders), vol_choco))
+                        orders['STRAWBERRIES'].append(Order('STRAWBERRIES', min(state.order_depths['STRAWBERRIES'].sell_orders), vol_strawberries))
+                        orders['ROSES'].append(Order('ROSES', min(state.order_depths['ROSES'].sell_orders), vol_roses))
 
                 elif rolling_5_spread_basket < avg_spread_basket - 1.5*std_spread_basket: #buy basket and sell choco
                     vol_basket = self.POSITION_LIMIT['GIFT_BASKET'] - self.position['GIFT_BASKET']
+                    vol_choco = min(240, 4*vol_basket)
+                    vol_strawberries = min(350, 6*vol_basket)
+                    vol_roses = vol_basket
                     if vol_basket > 0:
                         orders['GIFT_BASKET'].append(Order('GIFT_BASKET', min(state.order_depths['GIFT_BASKET'].sell_orders)+2, vol_basket))
+                        orders['CHOCOLATE'].append(Order('CHOCOLATE', max(state.order_depths['CHOCOLATE'].buy_orders), -vol_choco))
+                        orders['STRAWBERRIES'].append(Order('STRAWBERRIES', max(state.order_depths['STRAWBERRIES'].buy_orders), -vol_strawberries))
+                        orders['ROSES'].append(Order('ROSES', max(state.order_depths['ROSES'].buy_orders), -vol_roses))
         return orders
-
+    
     def __init__(self):
         self.position_limit = 100  # Maximum number of Orchids you can hold or short
         self.arbitrage_opportunities = []
@@ -365,13 +364,100 @@ class Trader:
             current_position += sell_volume
 
         return orders_to_place
+    
+    
+    def norm_cdf(self,x):
+        # Constants in the rational approximation
+        p = 0.3275911
+        a1 = 0.254829592
+        a2 = -0.284496736
+        a3 = 1.421413741
+        a4 = -1.453152027
+        a5 = 1.061405429
 
+        # Save the sign of x
+        sign = np.sign(x)
+        x = np.abs(x) / np.sqrt(2.0)
+
+        # A&S formula 7.1.26
+        t = 1.0 / (1.0 + p * x)
+        y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * np.exp(-x * x)
+
+        return 0.5 * (1.0 + sign * y)
+
+    def black_scholes_price(self, S, K, T, r, vol):
+        d1 = (np.log(S / K) + (r + 0.5 * vol ** 2) * T) / (vol * np.sqrt(T))
+        d2 = d1 - vol * np.sqrt(T)
+        cdf_d1 = self.norm_cdf(d1)
+        cdf_d2 = self.norm_cdf(d2)
+        call_price = S * cdf_d1 - K * np.exp(-r * T) * cdf_d2
+        return call_price
+    
+    
+    def black_scholes(self, state):
+        orders = {'COCONUT': [], 'COCONUT_COUPON': []}
+        strike = 10000
+        rate = 0
+        volatility = 0.19314
+        
+        mid_price = self.get_mid_price('COCONUT', state)
+        if mid_price is not None:
+            # Append the new mid-price to the series
+            self.prices['COCONUT'] = pd.concat([self.prices["COCONUT"],pd.Series({state.timestamp: mid_price})])
+        
+        mid_price_coconut_coupon = self.get_mid_price('COCONUT_COUPON', state)
+        if mid_price_coconut_coupon is None:
+            return orders  # No valid price available for COCONUT_COUPON, skip trading logic
+
+        T = 245/365
+        #volatility = self.implied_volatility(mid_price_coconut_coupon,mid_price, strike,T,rate)
+        fair_call = self.black_scholes_price(mid_price, strike, T, rate, volatility)
+        
+        #rolling_volatility = self.calculate_rolling_volatility(self.prices['COCONUT'], window=10).iloc[-1]
+        fair_call = self.black_scholes_price(mid_price, strike, T, rate, volatility)
+
+        best_ask = min(state.order_depths['COCONUT_COUPON'].sell_orders, default=0)
+        best_bid = max(state.order_depths['COCONUT_COUPON'].buy_orders, default=0)
+
+        spread = fair_call - mid_price_coconut_coupon
+        
+        std_spread = 13.495
+
+        self.prices["SPREAD_COCO"] = pd.concat([self.prices["SPREAD_COCO"],pd.Series({state.timestamp: spread})])
+        rolling_10_spread = self.prices["SPREAD_COCO"].rolling(5).mean().iloc[-1]
+
+        if rolling_10_spread > 0.7*std_spread:
+            volume = self.POSITION_LIMIT['COCONUT_COUPON'] - self.position['COCONUT_COUPON']
+            if volume > 0: 
+                orders['COCONUT_COUPON'].append(Order('COCONUT_COUPON', best_ask, volume))
+        if rolling_10_spread < -0.7*std_spread:
+            volume = self.POSITION_LIMIT['COCONUT_COUPON'] + self.position['COCONUT_COUPON']
+            if volume > 0: 
+                orders['COCONUT_COUPON'].append(Order('COCONUT_COUPON', best_bid, -volume))
+
+         
+        coupon_position = state.position.get('COCONUT_COUPON', 0)
+        coconut_position = state.position.get('COCONUT', 0)
+        desired_position = -(coupon_position//2)
+
+        trade_size = desired_position - coconut_position
+        best_ask = min(state.order_depths['COCONUT'].sell_orders, default=0)
+        best_bid = max(state.order_depths['COCONUT'].buy_orders, default=0)
+        
+        if trade_size > 0:
+            orders['COCONUT'].append(Order(symbol='COCONUT', price=best_ask+1, quantity=trade_size))
+        elif trade_size < 0:
+            orders['COCONUT'].append(Order(symbol='COCONUT', price=best_bid-1, quantity=trade_size))
+        
+        return orders
+    
     def run(self, state: TradingState) -> Dict[str, List[Order]]:
         """
         Method that takes all buy and sell orders for all symbols as an input,
         and outputs a list of orders to be sent
         """
-        result = {AMETHYSTS : [], STARFRUIT: [], ORCHIDS: [], 'STRAWBERRIES' : [], 'CHOCOLATE' : [], 'ROSES' : [], 'GIFT_BASKET' : []}
+        result = {AMETHYSTS : [], STARFRUIT: [], ORCHIDS: [], 'STRAWBERRIES' : [], 'CHOCOLATE' : [], 'ROSES' : [], 'GIFT_BASKET' : [], 
+                  'COCONUT_COUPON' : [], 'COCONUT' : []}
 
         sell_price, trade_volume = self.determine_arbitrage_opportunity(state)
         
@@ -391,8 +477,20 @@ class Trader:
             self.position[key] = val
 
         orders3 = self.compute_orders_baskets(state)
-        ordersRoses = self.compute_orders_roses(state)
 
+
+        orders4 = self.black_scholes(state)
+        
+        try:
+            result['COCONUT_COUPON'] += orders4['COCONUT_COUPON']
+        except Exception as e:
+            print("Error in COCONUT_COUPON strategy")
+            print(e)
+        try:
+            result['COCONUT'] += orders4['COCONUT']
+        except Exception as e:
+            print("Error in COCONUT strategy")
+            print(e)
         try:
             result['GIFT_BASKET'] += orders3['GIFT_BASKET']
         except Exception as e:
@@ -406,7 +504,7 @@ class Trader:
             print(e)
 
         try:
-            result['ROSES'] += ordersRoses
+            result['ROSES'] += orders3['ROSES']
         except Exception as e:
             print("Error in ROSES strategy")
             print(e)
