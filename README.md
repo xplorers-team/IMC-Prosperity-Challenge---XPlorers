@@ -1,4 +1,4 @@
-# IMC Prosperity Challenge 2024 - X-Plorers Team
+# IMC Prosperity 2 Challenge 2024 - X-Plorers Team
 
 
 
